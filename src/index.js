@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { writeFile } from "node:fs/promises"; 
 import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
