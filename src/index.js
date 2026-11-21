@@ -1,4 +1,6 @@
-import { readFile, writeFile } from "node:fs/promises"; 
+import { writeFile } from "node:fs/promises"; 
+import { createReadStream } from "node:fs";
+import { createInterface } from "node:readline";
 import { Command }  from "commander";
 const program = new Command();
 
@@ -7,7 +9,7 @@ program
   .description("Count word frequencies in a text file")
   .version("1.0.0")
   .argument("<file>", "path to a text file")
-  .option("-n, --top <n>", "how many words to show", "10")
+  .option("-n, --top <n>", "how many words to show", process.env.DEFAULT_TOP ?? "10")
   .option("-i, --ignore-case", "treat The and the as the same word")
   .option("-f, --format <type>", "text or json", "text")
   .option("-o, --out <path>", "write result to a file instead of stdout")
@@ -19,32 +21,38 @@ program
     if(options.format !== "text" && options.format !== "json"){
       program.error("--format must be text or json");
     }
-    let text;
+    const counts = new Map();
     try{
-     text = await readFile(file, "utf8");
+     const rl = createInterface({
+      input: createReadStream(file, {encoding: "utf8"}),
+      crlfDelay: Infinity,
+     });
+
+     for await (const line of rl){
+      const text = options.ignoreCase ? line.toLowerCase() : line;
+      const words = text.match(/[\p{L}\p{N}']+/gu) ?? [];
+      for (const word of words){
+        counts.set(word, (counts.get(word) ?? 0) +1);
+      }
+     }
     } catch(err){
-     if(err.code === "ENOENT"){
-        console.error(`wordfreq: file not found: ${file}`);
+      if (err.code === "ENOENT") {
+        console.error(`wordfreq: output folder not found: ${file}`);
         process.exitCode = 1;
         return;
-     }
-     if (err.code === "EISDIR") {
-     console.error(`wordfreq: ${file} is a folder, not a file`);
-     process.exitCode = 1;
-     return;
+      }
+      if (err.code === "EISDIR") {
+        console.error(`wordfreq: ${file} is a folder, not a file`);
+        process.exitCode = 1;
+        return;
+      }
+      throw err;
     }
-     throw err;
-    }
-    const normalized = options.ignoreCase ? text.toLowerCase() : text;
-    const words = normalized.match(/[\p{L}\p{N}']+/gu) ?? [];
-    const counts = new Map();
-    for(const word of words){
-      counts.set(word, (counts.get(word) ?? 0) + 1);
-    }
+    
     const result = [...counts.entries()]
     .sort((a,b) => b[1] - a[1])
     .slice(0, top);
-  
+
     let output;
     if(options.format == "json"){
       output = JSON.stringify(
@@ -59,7 +67,16 @@ program
     }
 
     if(options.out){
-      await writeFile(options.out, output + "\n", "utf8");
+      try{
+        await writeFile(options.out, output + "\n", "utf8");
+      } catch(err){
+        if(err.code === "ENOENT"){
+        console.error(`wordfreq: file not found: ${options.out}`);
+        process.exitCode = 1;
+        return;
+       }
+        throw err;
+      }
       console.error(`wordfreq: wrote ${options.out}`);
     } else{
       console.log(output);
